@@ -32,6 +32,9 @@ def compute_relevance_grades(data):
 
 def clean_data(data):
     data.date_time = pd.to_datetime(data.date_time)
+    # TODO: should we remove this ??
+    del data['date_time']
+
     # more than 90% missing for these, remove them:
     del data['visitor_hist_starrating']
     del data['visitor_hist_adr_usd']
@@ -80,20 +83,29 @@ def clean_data(data):
         del data[c]
 
     # scale the following columns between the min/max
-    per_srch_scaled_columns = ['price_usd', 'prop_starrating', 'prop_review_score',
+    scaled_columns = ['price_usd', 'prop_starrating', 'prop_review_score',
               'prop_location_score1', 'prop_location_score2', 'prop_log_historical_price', 'srch_query_affinity_score']
 
     data.index = data.srch_id
-    for c in per_srch_scaled_columns:
-        data['%s_min' % c] = data.groupby('srch_id')[c].min()
-        data['%s_max' % c] = data.groupby('srch_id')[c].max()
+    for c in scaled_columns:
+        data['%s_mean' % c] = data.groupby('srch_id')[c].mean()
     data.index = range(len(data))
 
-    # TODO: According to the winning entry, it helps to have avg property features, so add these features as well
+    for c in scaled_columns:
+        data['%s_normalized' % c] = data[c] / data['%s_mean' % c]
+        data['%s_normalized' % c] = data['%s_normalized' % c].fillna(1)
+
+    # TODO: According to the winning entry, it helps to have avg features per property, so add these features as well
     # https://www.kaggle.com/c/expedia-personalized-sort/discussion/6228
 
-    for c in per_srch_scaled_columns:
-        data['%s_normalized' % c] = (data[c] - data['%s_min' % c]) / (data['%s_max' % c] - data['%s_min' % c])
+    data.index = data.prop_id
+    for c in scaled_columns:
+        data['%s_prop_mean' % c] = data.groupby('prop_id')[c].mean()
+    data.index = range(len(data))
+
+    for c in scaled_columns:
+        data['%s_prop_normalized' % c] = data[c] / data['%s_prop_mean' % c]
+        data['%s_prop_normalized' % c] = data['%s_prop_normalized' % c].fillna(1)
         del data[c]
 
     return data
@@ -101,7 +113,7 @@ def clean_data(data):
 
 def split_data(data, train_ratio=0.8):
     """
-        Split the data into train/test sets
+        Split the data into train/validation sets
 
     :param data: All the labeled data available
     :param train_ratio: ratio of training set to the whole dataset
@@ -118,8 +130,8 @@ def split_data(data, train_ratio=0.8):
     del train_data['booking_bool']
     del train_data['relevance_grade']
 
-    test_data = data[~data.srch_id.isin(train_ids)]
-    return train_data, test_data
+    validation_data = data[~data.srch_id.isin(train_ids)]
+    return train_data, validation_data
 
 
 def compute_score(predictions):
@@ -132,9 +144,27 @@ def evaluate(predictions):
 
 
 def train(train_data):
-    #TODO: train with ranklib or pyltr or any other from this link: http://arogozhnikov.github.io/2015/06/26/learning-to-rank-software-datasets.html
-    # This link has a lot of models in ranking setup with examples: https://github.com/ogrisel/notebooks/blob/master/Learning%20to%20Rank.ipynb
+    #TODO: train with ranklib:
+    # https://sourceforge.net/p/lemur/wiki/RankLib%20How%20to%20use/
+    #  or pyltr or any other from this link:
+    # http://arogozhnikov.github.io/2015/06/26/learning-to-rank-software-datasets.html
+    # This link has a lot of models in ranking setup with examples:
+    # https://github.com/ogrisel/notebooks/blob/master/Learning%20to%20Rank.ipynb
     return model
+
+
+def save_data(data, filename):
+    """
+    Saves the data in ranklib format, see https://sourceforge.net/p/lemur/wiki/RankLib%20File%20Format/
+    :param data: dataset to save
+    :param filename: filenam
+    :return:
+    """
+    from sklearn.datasets import dump_svmlight_file
+    features = list(data.columns)
+    features.remove('relevance_grade')
+    features.remove('srch_id')
+    dump_svmlight_file(data[features], data['relevance_grade'], filename, zero_based=False, query_id=data['srch_id'])
 
 
 if __name__ == '__main__':
@@ -142,13 +172,8 @@ if __name__ == '__main__':
     data = compute_relevance_grades(data)
 
     data = clean_data(data)
-    # TODO: create save_data() w.r.t https://sourceforge.net/p/lemur/wiki/RankLib%20File%20Format/
 
-    print("Ratio of nans per feature %s" % (data.isnull().sum(axis=0) / len(data)))
+    save_data(data, 'data/train_ranklib.txt')
 
-    train_data, test_data = split_data(data, 0.997)
-    model = train(train_data)
-    test_data = model.predict(test_data)
-    score = evaluate(test_data)
-
-    print(test_data)
+    # download ranlib.jar from https://sourceforge.net/projects/lemur/files/lemur/RankLib-2.9/RankLib-2.9.jar/download
+    # java -jar RankLib-2.9.jar -train data/train_ranklib.txt -ranker 6 -metric2t NDCG@38 -gmax 5 -tvs 0.8 -save lambdamart.model  -test data/train_ranklib.txt -lr 0.01 -tree 100
