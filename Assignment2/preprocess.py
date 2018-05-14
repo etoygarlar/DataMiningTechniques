@@ -162,7 +162,13 @@ def save_data(data, filename):
     """
     from sklearn.datasets import dump_svmlight_file
     features = list(data.columns)
+
     features.remove('relevance_grade')
+    features.remove('click_bool')
+    features.remove('booking_bool')
+    features.remove('position')
+    features.remove('gross_bookings_usd')
+
     features.remove('srch_id')
     dump_svmlight_file(data[features], data['relevance_grade'], filename, zero_based=False, query_id=data['srch_id'])
 
