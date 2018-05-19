@@ -40,8 +40,11 @@ def clean_data(data):
     del data['visitor_hist_adr_usd']
 
     # these are ground-truth data, ie they don't exist in the test data
-    del data['position']
-    del data['gross_bookings_usd']
+    if 'position' in data:
+        del data['position']
+
+    if 'gross_bookings_usd' in data:
+        del data['gross_bookings_usd']
 
     for c in ['prop_review_score', 'prop_location_score2']:
         data[c] = data[c].fillna(0)
@@ -163,23 +166,32 @@ def save_data(data, filename):
     from sklearn.datasets import dump_svmlight_file
     features = list(data.columns)
 
-    features.remove('relevance_grade')
-    features.remove('click_bool')
-    features.remove('booking_bool')
-    features.remove('position')
-    features.remove('gross_bookings_usd')
-
+    if 'train' in filename:
+        features.remove('relevance_grade')
+        features.remove('click_bool')
+        features.remove('booking_bool')
+    else:
+        # for test data we don't know the actual relevance grade
+        data['relevance_grade'] = 0
     features.remove('srch_id')
+    print(F'Writing to file {filename}')
+
     dump_svmlight_file(data[features], data['relevance_grade'], filename, zero_based=False, query_id=data['srch_id'])
 
 
 if __name__ == '__main__':
-    data = pd.read_hdf('data/data.h5', 'train')
-    data = compute_relevance_grades(data)
-
-    data = clean_data(data)
-
-    save_data(data, 'data/train_ranklib.txt')
+    #for ds in ['train', 'test']:
+    for ds in ['test']:
+        data = pd.read_hdf('data/data.h5', ds)
+        if 'ds' == 'train':
+            data = compute_relevance_grades(data)
+        data = clean_data(data)
+        save_data(data, 'data/%s_ranklib.txt' % ds)
 
     # download ranlib.jar from https://sourceforge.net/projects/lemur/files/lemur/RankLib-2.9/RankLib-2.9.jar/download
+    # train:
     # java -jar RankLib-2.9.jar -train data/train_ranklib.txt -ranker 6 -metric2t NDCG@38 -gmax 5 -tvs 0.8 -save lambdamart.model  -test data/train_ranklib.txt -lr 0.01 -tree 100
+    # rank:
+    # java -jar RankLib-2.9.jar -load lambdamart.model -rank data/test_ranklib.txt -score myScoreFile.txt
+
+    
